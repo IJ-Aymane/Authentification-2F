@@ -1,0 +1,14 @@
+services:
+  auth:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    environment:
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY before starting}
+      AUTH_DB_PATH: /data/auth.db
+    volumes:
+      - auth_data:/data
+
+volumes:
+  auth_data:

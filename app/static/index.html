@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Authentification</title>
+
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #0d1117;
+      color: #e6edf3;
+      font-family: system-ui, sans-serif;
+      padding: 24px;
+    }
+
+    .card {
+      width: 100%;
+      max-width: 460px;
+      padding: 32px;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 20px;
+    }
+
+    h1 { margin-top: 0; font-size: 26px; }
+    p { color: #9da7b3; line-height: 1.5; }
+    label { display: block; margin: 18px 0 8px; }
+
+    input {
+      width: 100%;
+      padding: 13px;
+      border-radius: 10px;
+      border: 1px solid #30363d;
+      background: #0d1117;
+      color: white;
+      font: inherit;
+    }
+
+    input:focus {
+      outline: 2px solid #58a6ff;
+      outline-offset: 2px;
+    }
+
+    button {
+      width: 100%;
+      margin-top: 22px;
+      padding: 13px;
+      background: #58a6ff;
+      color: #0d1117;
+      border: 0;
+      border-radius: 10px;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    button:disabled { opacity: .6; cursor: wait; }
+
+    .secondary {
+      background: transparent;
+      color: #58a6ff;
+      margin-top: 10px;
+    }
+
+    #message { margin-bottom: 0; overflow-wrap: anywhere; }
+    #message.error { color: #ff8b8b; }
+    #message.success { color: #7ee787; }
+    #setupSecret {
+      display: block;
+      padding: 12px;
+      margin-top: 8px;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      background: #0d1117;
+      color: #7ee787;
+      font-size: 15px;
+      overflow-wrap: anywhere;
+      user-select: all;
+    }
+    #setupQrCode {
+      display: block;
+      width: 220px;
+      height: 220px;
+      max-width: 100%;
+      margin: 16px auto;
+      padding: 8px;
+      border-radius: 8px;
+      background: white;
+    }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+
+<body>
+  <main class="card">
+    <section id="auth">
+      <h1 id="title">Connexion</h1>
+      <p>Bienvenue sur votre espace personnel.</p>
+
+      <form id="authForm">
+        <label for="username">Nom d'utilisateur</label>
+        <input
+          id="username"
+          name="username"
+          autocomplete="username"
+          maxlength="100"
+          pattern="\S+"
+          required
+        >
+
+        <label for="password">Mot de passe</label>
+        <input
+          id="password"
+          name="password"
+          type="password"
+          autocomplete="current-password"
+          maxlength="128"
+          required
+        >
+
+        <label id="otpLabel" for="otpCode" hidden>Code Google Authenticator</label>
+        <input
+          id="otpCode"
+          name="otp_code"
+          type="text"
+          inputmode="numeric"
+          autocomplete="one-time-code"
+          pattern="[0-9]{6}"
+          maxlength="6"
+          hidden
+        >
+
+        <button id="submitButton" type="submit">Se connecter</button>
+      </form>
+
+      <button id="switchButton" class="secondary" type="button">
+        Créer un compte
+      </button>
+    </section>
+
+    <section id="profile" hidden>
+      <h1>Mon profil</h1>
+      <p>Connecté en tant que <strong id="profileUsername"></strong></p>
+      <p>Identifiant : <span id="profileId"></span></p>
+      <h2>Sécurité</h2>
+      <p id="twoFactorStatus"></p>
+      <button id="setupToggle" type="button">Activer la 2FA</button>
+
+      <form id="setupForm" hidden>
+        <button type="submit">Préparer la configuration</button>
+      </form>
+
+      <div id="setupResult" hidden>
+        <p>Scannez ce QR code avec Google Authenticator, puis saisissez le code à 6 chiffres pour confirmer la configuration.</p>
+        <img id="setupQrCode" alt="QR code de configuration pour Google Authenticator">
+        <p>Si vous ne pouvez pas scanner le QR code, saisissez cette clé manuellement :</p>
+        <code id="setupSecret"></code>
+        <button id="copySecretButton" class="secondary" type="button">
+          Copier la clé
+        </button>
+      </div>
+
+      <form id="confirmForm" hidden>
+        <label for="confirmCode">Code affiché par votre application</label>
+        <input
+          id="confirmCode"
+          type="text"
+          inputmode="numeric"
+          autocomplete="one-time-code"
+          pattern="[0-9]{6}"
+          maxlength="6"
+          required
+        >
+        <button type="submit">Vérifier et activer la 2FA</button>
+      </form>
+      <p id="setupNextCode" hidden>Configuration confirmée. Pour votre prochaine connexion, utilisez un nouveau code Google Authenticator.</p>
+      <button id="logoutButton" type="button">Se déconnecter</button>
+    </section>
+
+    <p id="message" role="status" aria-live="polite"></p>
+  </main>
+
+  <script>
+    const auth = document.getElementById("auth");
+    const profile = document.getElementById("profile");
+    const form = document.getElementById("authForm");
+    const username = document.getElementById("username");
+    const password = document.getElementById("password");
+    const otpCode = document.getElementById("otpCode");
+    const otpLabel = document.getElementById("otpLabel");
+    const title = document.getElementById("title");
+    const submitButton = document.getElementById("submitButton");
+    const switchButton = document.getElementById("switchButton");
+    const message = document.getElementById("message");
+    const setupForm = document.getElementById("setupForm");
+    const setupResult = document.getElementById("setupResult");
+    const confirmForm = document.getElementById("confirmForm");
+
+    let registerMode = false;
+    // Le champ code 2FA n'apparaît que si le serveur le demande.
+    let otpRequired = false;
+
+    // Token conservé en mémoire : actualiser la page déconnecte l'utilisateur.
+    let accessToken = null;
+
+    function showMessage(text = "", error = false) {
+      message.textContent = text;
+      message.className = error ? "error" : "success";
+    }
+
+    function updateMode() {
+      title.textContent = registerMode ? "Inscription" : "Connexion";
+      submitButton.textContent = registerMode
+        ? "Créer mon compte"
+        : "Se connecter";
+      switchButton.textContent = registerMode
+        ? "J'ai déjà un compte"
+        : "Créer un compte";
+
+      password.autocomplete = registerMode
+        ? "new-password"
+        : "current-password";
+
+      if (registerMode) {
+        otpCode.hidden = true;
+        otpLabel.hidden = true;
+        otpCode.required = false;
+        username.minLength = 3;
+        password.minLength = 8;
+      } else {
+        otpCode.hidden = !otpRequired;
+        otpLabel.hidden = !otpRequired;
+        otpCode.required = otpRequired;
+        username.removeAttribute("minlength");
+        password.removeAttribute("minlength");
+      }
+    }
+
+    async function api(path, options = {}) {
+      const response = await fetch(path, options);
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        const detail = data?.detail;
+
+        const errorText = Array.isArray(detail)
+          ? detail.map(item => item.msg).join(" — ")
+          : typeof detail === "string"
+            ? detail
+            : `Erreur serveur (${response.status})`;
+
+        throw new Error(errorText);
+      }
+
+      return data;
+    }
+
+    async function loadProfile() {
+      const user = await api("/auth/me", {
+        headers: {
+          Authorization: `Bearer ${accessToken}`
+        }
+      });
+
+      document.getElementById("profileUsername").textContent = user.username;
+      document.getElementById("profileId").textContent = user.id;
+      updateTwoFactorStatus(user.two_factor_enabled);
+
+      auth.hidden = true;
+      profile.hidden = false;
+      form.reset();
+      showMessage();
+    }
+
+    async function beginTwoFactorSetup() {
+      const data = await api("/auth/2fa/setup", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`
+        }
+      });
+
+      document.getElementById("setupSecret").textContent = data.secret;
+      document.getElementById("setupQrCode").src = data.qr_code_data_url;
+      document.getElementById("twoFactorStatus").textContent = "Scannez le QR code et confirmez avec un code de votre application.";
+      document.getElementById("setupToggle").hidden = true;
+      setupForm.hidden = true;
+      setupResult.hidden = false;
+      confirmForm.hidden = false;
+      document.getElementById("profileUsername").textContent = username.value;
+      document.getElementById("profileId").textContent = "";
+      auth.hidden = true;
+      profile.hidden = false;
+      document.getElementById("confirmCode").focus();
+    }
+
+    function updateTwoFactorStatus(enabled) {
+      document.getElementById("twoFactorStatus").textContent = enabled
+        ? "La vérification en deux étapes est activée."
+        : "La vérification en deux étapes est désactivée.";
+      document.getElementById("setupToggle").hidden = enabled;
+      setupForm.hidden = enabled;
+      setupResult.hidden = true;
+      confirmForm.hidden = true;
+      document.getElementById("setupNextCode").hidden = true;
+      document.getElementById("setupQrCode").removeAttribute("src");
+      document.getElementById("setupSecret").textContent = "";
+      document.getElementById("confirmCode").value = "";
+    }
+
+    switchButton.addEventListener("click", () => {
+      registerMode = !registerMode;
+      otpRequired = false;
+      otpCode.value = "";
+      password.value = "";
+      updateMode();
+      showMessage();
+    });
+
+    form.addEventListener("submit", async event => {
+      event.preventDefault();
+      submitButton.disabled = true;
+      switchButton.disabled = true;
+      showMessage();
+
+      try {
+        if (registerMode) {
+          await api("/auth/register", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              username: username.value,
+              password: password.value
+            })
+          });
+
+          registerMode = false;
+          password.value = "";
+          updateMode();
+          showMessage("Compte créé ! Vous pouvez vous connecter.");
+          password.focus();
+        } else {
+          // OAuth2PasswordRequestForm attend un formulaire, pas du JSON.
+          const body = new URLSearchParams({
+            username: username.value,
+            password: password.value,
+            otp_code: otpCode.value
+          });
+
+          const data = await api("/auth/login", {
+            method: "POST",
+            body
+          });
+
+          accessToken = data.access_token;
+          otpCode.value = "";
+
+          try {
+            if (data["2fa_enrollment_required"]) {
+              await beginTwoFactorSetup();
+            } else {
+              await loadProfile();
+            }
+          } catch (error) {
+            accessToken = null;
+            throw error;
+          }
+        }
+      } catch (error) {
+        const isOtpError = !registerMode
+          && !(error instanceof TypeError)
+          && /otp|2fa|totp|authenticator|code/i.test(error.message);
+
+        if (isOtpError) {
+          const hadCode = otpCode.value.trim() !== "";
+          otpRequired = true;
+          updateMode();
+          otpCode.value = "";
+          otpCode.focus();
+
+          // Code vide : ce n'est pas une erreur, c'est l'étape suivante.
+          showMessage(
+            hadCode
+              ? "Code invalide ou expiré. Réessayez avec un nouveau code."
+              : "Entrez le code à 6 chiffres affiché par Google Authenticator.",
+            hadCode
+          );
+          return;
+        }
+
+        showMessage(
+          error instanceof TypeError
+            ? "Impossible de joindre le serveur."
+            : error.message,
+          true
+        );
+      } finally {
+        submitButton.disabled = false;
+        switchButton.disabled = false;
+      }
+    });
+
+    document.getElementById("setupToggle").addEventListener("click", () => {
+      setupForm.hidden = false;
+    });
+
+    setupForm.addEventListener("submit", async event => {
+      event.preventDefault();
+      const button = setupForm.querySelector("button");
+      button.disabled = true;
+      showMessage();
+
+      try {
+        await beginTwoFactorSetup();
+      } catch (error) {
+        showMessage(error.message, true);
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    document.getElementById("copySecretButton").addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(
+          document.getElementById("setupSecret").textContent
+        );
+        showMessage("Clé copiée.");
+      } catch {
+        showMessage("Copie impossible dans ce navigateur.", true);
+      }
+    });
+
+    confirmForm.addEventListener("submit", async event => {
+      event.preventDefault();
+      const button = confirmForm.querySelector("button");
+      button.disabled = true;
+      showMessage();
+
+      try {
+        const data = await api("/auth/2fa/confirm", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`
+          },
+          body: JSON.stringify({
+            code: document.getElementById("confirmCode").value
+          })
+        });
+
+        accessToken = data.access_token;
+        await loadProfile();
+        showMessage("La 2FA est activée.");
+      } catch (error) {
+        showMessage(error.message, true);
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    document.getElementById("logoutButton").addEventListener("click", () => {
+      accessToken = null;
+      otpRequired = false;
+      updateMode();
+      profile.hidden = true;
+      auth.hidden = false;
+      document.getElementById("profileUsername").textContent = "";
+      document.getElementById("profileId").textContent = "";
+      updateTwoFactorStatus(false);
+      form.reset();
+      showMessage("Vous êtes déconnecté.");
+    });
+
+    updateMode();
+  </script>
+</body>
+</html>
